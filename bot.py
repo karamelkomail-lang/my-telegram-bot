@@ -109,11 +109,31 @@ def get_image_bytes(query, attempts=3):
             img_url = r.json()["urls"]["regular"]
             img_r = requests.get(img_url, timeout=25)
             img_r.raise_for_status()
+            print("Image source: Unsplash")
             return img_r.content
         except Exception as e:
             last_error = e
             print("Unsplash attempt " + str(attempt) + " failed: " + str(e))
     print("Unsplash error after " + str(attempts) + " attempts: " + str(last_error))
+
+    # Фоллбэк: случайное фото с Picsum (без API ключа)
+    print("Trying Picsum fallback...")
+    for attempt in range(1, attempts + 1):
+        try:
+            # seed случайный, чтобы каждый раз было разное фото
+            seed = random.randint(1, 1000)
+            r = requests.get(
+                "https://picsum.photos/seed/" + str(seed) + "/1080/1350",
+                timeout=25,
+                allow_redirects=True,
+            )
+            r.raise_for_status()
+            print("Image source: Picsum (seed=" + str(seed) + ")")
+            return r.content
+        except Exception as e:
+            print("Picsum attempt " + str(attempt) + " failed: " + str(e))
+
+    print("All image sources failed.")
     return None
 
 
@@ -227,6 +247,22 @@ def send_photo(image_file, caption):
         return False
 
 
+def send_text(text):
+    """Отправка текстового поста без фото — последний резерв."""
+    try:
+        r = requests.post(
+            "https://api.telegram.org/bot" + TELEGRAM_TOKEN + "/sendMessage",
+            data={"chat_id": CHANNEL_ID, "text": text},
+            timeout=30,
+        )
+        r.raise_for_status()
+        print("Text-only post sent!")
+        return True
+    except Exception as e:
+        print("Telegram text error: " + str(e))
+        return False
+
+
 def main():
     today = now_msk()
     print("Bot started (MSK): " + today.strftime("%d.%m.%Y %H:%M"))
@@ -289,15 +325,18 @@ def main():
 
     print("Image query: " + query)
     image_bytes = get_image_bytes(query)
+
+    caption = build_caption(slot, holiday_name)
+    print("Caption: " + caption)
+
     if not image_bytes:
-        print("No image, aborting.")
+        # Последний резерв — отправить пост текстом без фото
+        print("No image available, sending text-only post.")
+        send_text(headline + "\n\n" + caption)
         return
 
     print("Drawing headline: " + headline)
     final_image = draw_text_on_image(image_bytes, headline)
-
-    caption = build_caption(slot, holiday_name)
-    print("Caption: " + caption)
 
     send_photo(final_image, caption)
 
