@@ -95,22 +95,26 @@ def pick_two_distinct_holidays():
     return chosen[0], chosen[1] if len(chosen) > 1 else None
 
 
-def get_image_bytes(query):
-    try:
-        r = requests.get(
-            "https://api.unsplash.com/photos/random",
-            params={"query": query, "orientation": "portrait", "content_filter": "high"},
-            headers={"Authorization": "Client-ID " + UNSPLASH_KEY},
-            timeout=10,
-        )
-        r.raise_for_status()
-        img_url = r.json()["urls"]["regular"]
-        img_r = requests.get(img_url, timeout=15)
-        img_r.raise_for_status()
-        return img_r.content
-    except Exception as e:
-        print("Unsplash error: " + str(e))
-        return None
+def get_image_bytes(query, attempts=3):
+    last_error = None
+    for attempt in range(1, attempts + 1):
+        try:
+            r = requests.get(
+                "https://api.unsplash.com/photos/random",
+                params={"query": query, "orientation": "portrait", "content_filter": "high"},
+                headers={"Authorization": "Client-ID " + UNSPLASH_KEY},
+                timeout=25,
+            )
+            r.raise_for_status()
+            img_url = r.json()["urls"]["regular"]
+            img_r = requests.get(img_url, timeout=25)
+            img_r.raise_for_status()
+            return img_r.content
+        except Exception as e:
+            last_error = e
+            print("Unsplash attempt " + str(attempt) + " failed: " + str(e))
+    print("Unsplash error after " + str(attempts) + " attempts: " + str(last_error))
+    return None
 
 
 def draw_text_on_image(image_bytes, headline, font_path=FONT_PATH):
@@ -213,7 +217,7 @@ def send_photo(image_file, caption):
             "https://api.telegram.org/bot" + TELEGRAM_TOKEN + "/sendPhoto",
             data={"chat_id": CHANNEL_ID, "caption": caption},
             files={"photo": ("card.jpg", image_file, "image/jpeg")},
-            timeout=20,
+            timeout=30,
         )
         r.raise_for_status()
         print("Published successfully!")
