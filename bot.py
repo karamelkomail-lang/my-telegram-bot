@@ -17,6 +17,7 @@ sys.stdout.reconfigure(encoding='utf-8')
 TELEGRAM_TOKEN = os.environ.get("TELEGRAM_TOKEN", "8802273997:AAGZCVZoXlpY5q5aGxIwQwejpVwyW5AYYGc")
 CHANNEL_ID     = os.environ.get("CHANNEL_ID",     "-1003762687242")
 UNSPLASH_KEY   = os.environ.get("UNSPLASH_KEY",   "wNkT39ct4eJRAA8hbANDLPcyFJmyVUgBq5kI-2cRzmo")
+PEXELS_KEY     = os.environ.get("PEXELS_KEY",     "")
 GEMINI_KEY     = os.environ.get("GEMINI_KEY",     "")
 # Слот передаётся из GitHub Actions: morning/day/holiday1/joke/fact/afternoon/holiday2/evening/night
 POST_SLOT      = os.environ.get("POST_SLOT", "auto")
@@ -79,13 +80,11 @@ def now_msk():
 
 
 def get_today_holidays():
-    """Возвращает список всех праздников на сегодня."""
     today = now_msk()
     return HOLIDAYS.get((today.month, today.day), [])
 
 
 def pick_two_distinct_holidays():
-    """Для двух праздничных слотов в день выбираем два разных праздника, если есть."""
     items = get_today_holidays()
     if not items:
         return None, None
@@ -96,35 +95,56 @@ def pick_two_distinct_holidays():
 
 
 def get_image_bytes(query, attempts=3):
-    last_error = None
+    # 1. Pexels — основной источник, стабильно работает с GitHub Actions
+    if PEXELS_KEY:
+        for attempt in range(1, attempts + 1):
+            try:
+                r = requests.get(
+                    "https://api.pexels.com/v1/search",
+                    params={"query": query, "orientation": "portrait", "per_page": 15},
+                    headers={"Authorization": PEXELS_KEY},
+                    timeout=10,
+                )
+                r.raise_for_status()
+                photos = r.json().get("photos", [])
+                if photos:
+                    img_url = random.choice(photos)["src"]["large2x"]
+                    img_r = requests.get(img_url, timeout=10)
+                    img_r.raise_for_status()
+                    print("Image source: Pexels")
+                    return img_r.content
+            except Exception as e:
+                print("Pexels attempt " + str(attempt) + " failed: " + str(e))
+        print("Pexels failed after " + str(attempts) + " attempts.")
+    else:
+        print("PEXELS_KEY not set, skipping Pexels.")
+
+    # 2. Unsplash — резерв
     for attempt in range(1, attempts + 1):
         try:
             r = requests.get(
                 "https://api.unsplash.com/photos/random",
                 params={"query": query, "orientation": "portrait", "content_filter": "high"},
                 headers={"Authorization": "Client-ID " + UNSPLASH_KEY},
-                timeout=25,
+                timeout=10,
             )
             r.raise_for_status()
             img_url = r.json()["urls"]["regular"]
-            img_r = requests.get(img_url, timeout=25)
+            img_r = requests.get(img_url, timeout=10)
             img_r.raise_for_status()
             print("Image source: Unsplash")
             return img_r.content
         except Exception as e:
-            last_error = e
             print("Unsplash attempt " + str(attempt) + " failed: " + str(e))
-    print("Unsplash error after " + str(attempts) + " attempts: " + str(last_error))
+    print("Unsplash failed after " + str(attempts) + " attempts.")
 
-    # Фоллбэк: случайное фото с Picsum (без API ключа)
-    print("Trying Picsum fallback...")
-    for attempt in range(1, attempts + 1):
+    # 3. Picsum — последний резерв, без ключа
+    for attempt in range(1, 3):
         try:
-            # seed случайный, чтобы каждый раз было разное фото
             seed = random.randint(1, 1000)
             r = requests.get(
                 "https://picsum.photos/seed/" + str(seed) + "/1080/1350",
-                timeout=25,
+                timeout=10,
                 allow_redirects=True,
             )
             r.raise_for_status()
@@ -248,7 +268,6 @@ def send_photo(image_file, caption):
 
 
 def send_text(text):
-    """Отправка текстового поста без фото — последний резерв."""
     try:
         r = requests.post(
             "https://api.telegram.org/bot" + TELEGRAM_TOKEN + "/sendMessage",
@@ -310,7 +329,6 @@ def main():
         headline = random.choice(IMAGE_TEXT["night"])
 
     else:
-        # auto-fallback по часу, на случай ручного теста
         hour = today.hour
         if 6 <= hour < 10:
             slot, query, headline = "morning", random.choice(MORNING_QUERIES), random.choice(IMAGE_TEXT["morning"])
@@ -330,14 +348,12 @@ def main():
     print("Caption: " + caption)
 
     if not image_bytes:
-        # Последний резерв — отправить пост текстом без фото
         print("No image available, sending text-only post.")
         send_text(headline + "\n\n" + caption)
         return
 
     print("Drawing headline: " + headline)
     final_image = draw_text_on_image(image_bytes, headline)
-
     send_photo(final_image, caption)
 
 
