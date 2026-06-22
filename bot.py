@@ -1,67 +1,101 @@
 # -*- coding: utf-8 -*-
 import os
 import sys
-import requests
-from datetime import datetime
+import io
 import random
+from datetime import datetime, timedelta, timezone
 
-# stdout utf-8 for GitHub Actions
+import requests
+from PIL import Image, ImageDraw, ImageFont
+
+from holidays import HOLIDAYS
+from jokes import get_random_joke, get_random_fact
+
 sys.stdout.reconfigure(encoding='utf-8')
 
+# ─────────────────────────────────────────
 TELEGRAM_TOKEN = os.environ.get("TELEGRAM_TOKEN", "8802273997:AAGZCVZoXlpY5q5aGxIwQwejpVwyW5AYYGc")
 CHANNEL_ID     = os.environ.get("CHANNEL_ID",     "-1003762687242")
 UNSPLASH_KEY   = os.environ.get("UNSPLASH_KEY",   "wNkT39ct4eJRAA8hbANDLPcyFJmyVUgBq5kI-2cRzmo")
-GEMINI_KEY     = os.environ.get("GEMINI_KEY",     "ВСТАВЬТЕ_КЛЮЧ_GEMINI")
+GEMINI_KEY     = os.environ.get("GEMINI_KEY",     "")
+# Слот передаётся из GitHub Actions: morning/day/holiday1/joke/fact/afternoon/holiday2/evening/night
+POST_SLOT      = os.environ.get("POST_SLOT", "auto")
+# ─────────────────────────────────────────
 
-HOLIDAYS = {
-    (1,  1):  ("Новый год",           "new year celebration snow"),
-    (1,  7):  ("Рождество",           "christmas cozy candles"),
-    (2, 14):  ("День влюблённых",     "love hearts roses"),
-    (2, 23):  ("День защитника",      "patriotic blue sky nature"),
-    (3,  8):  ("8 Марта",             "spring flowers women"),
-    (5,  1):  ("Праздник весны",      "spring nature flowers"),
-    (5,  9):  ("День Победы",         "red carnations memorial"),
-    (6,  1):  ("День защиты детей",   "children happy playground"),
-    (6, 12):  ("День России",         "russia nature landscape"),
-    (12, 31): ("Канун Нового года",   "new year eve fireworks"),
+MOSCOW_TZ = timezone(timedelta(hours=3))
+FONT_PATH = os.path.join(os.path.dirname(__file__), "fonts", "DejaVuSans-Bold.ttf")
+
+MORNING_QUERIES   = ["sunrise morning golden light","morning coffee flowers","dawn nature peaceful","morning dew flowers garden","sunrise landscape beautiful","morning forest light mist"]
+DAY_QUERIES       = ["sunny day flowers meadow","beautiful nature sunshine","spring flowers bright colorful","colorful flowers garden","cheerful nature sunshine warm","blue sky summer field"]
+AFTERNOON_QUERIES = ["warm afternoon light nature","peaceful countryside sunshine","flowers field bright day"]
+EVENING_QUERIES   = ["sunset golden hour calm","evening sky orange clouds","sunset over water peaceful","golden hour nature warm"]
+NIGHT_QUERIES     = ["night stars peaceful sky","moon night cozy","night sky stars milky way","cozy evening candlelight warm"]
+JOKE_QUERIES      = ["funny cute animal colorful","quirky cheerful illustration","playful bright colorful background"]
+FACT_QUERIES      = ["curious nature macro colorful","interesting wildlife close up","amazing nature detail bright"]
+
+IMAGE_TEXT = {
+    "morning":   ["Доброе утро!", "Утро доброе!", "С добрым утром!"],
+    "day":       ["Добрый день!", "Хорошего дня!", "Доброго дня!"],
+    "afternoon": ["Хорошего полудня!", "Доброго времени!"],
+    "evening":   ["Доброго вечера!", "Хорошего вечера!"],
+    "night":     ["Спокойной ночи!", "Сладких снов!", "Доброй ночи!"],
+    "joke":      ["Улыбнись!", "Юмор дня"],
+    "fact":      ["А вы знали?", "Интересный факт"],
 }
 
-MORNING_QUERIES = ["sunrise morning golden light","morning coffee flowers","dawn nature peaceful","morning dew flowers garden","sunrise landscape beautiful"]
-DAY_QUERIES     = ["sunny day flowers meadow","beautiful nature sunshine","spring flowers bright colorful","colorful flowers garden","cheerful nature sunshine warm"]
-NIGHT_QUERIES   = ["night stars peaceful sky","moon night cozy","evening sunset calm","night sky stars","cozy evening candlelight warm"]
-
-FALLBACK = {
+CAPTION_FALLBACK = {
     "morning": [
-        "Доброе утро! ☀️\n\nПусть этот день принесёт вам радость и тепло.\nУлыбнитесь — всё будет хорошо! 🌸",
-        "Доброе утро! 🌅\n\nНовый день — новые возможности.\nПусть всё получится! ✨",
-        "Утро доброе! 🌤\n\nПроснитесь с улыбкой — этот день будет вашим! ☕",
+        "Пусть этот день принесёт вам радость и тепло. Улыбнитесь — всё будет хорошо! 🌸",
+        "Новый день — новые возможности. Пусть всё получится! ✨",
+        "Проснитесь с улыбкой — этот день будет вашим! ☕",
     ],
     "day": [
-        "Добрый день! ☀️\n\nПусть середина дня зарядит вас энергией.\nВсё получится! 🌸",
-        "Добрый день! 🌞\n\nПозвольте себе немного отдохнуть и зарядиться позитивом! ✨",
-        "Добрый день! 🌼\n\nПусть этот час будет продуктивным и радостным! ☕",
+        "Пусть середина дня зарядит вас энергией и хорошим настроением 🌸",
+        "Позвольте себе немного отдохнуть и зарядиться позитивом! ✨",
+    ],
+    "afternoon": [
+        "Пусть остаток дня пройдёт легко и спокойно 🌼",
+        "Самое время сделать паузу и улыбнуться 😊",
+    ],
+    "evening": [
+        "Пусть вечер подарит уют и спокойствие после насыщенного дня 🌇",
+        "Самое время остановиться и просто насладиться моментом 🍂",
     ],
     "night": [
-        "Спокойной ночи! 🌙\n\nПусть ночь будет тихой, а сны — добрыми и светлыми. ✨",
-        "Спокойной ночи! 🌠\n\nОтдохните и наберитесь сил для нового дня. 😊",
-        "Спокойной ночи! 🛋\n\nПусть вам приснится что-то тёплое и светлое. ✨",
+        "Пусть ночь будет тихой, а сны — добрыми и светлыми ✨",
+        "Отдохните и наберитесь сил для нового дня 😊",
     ],
 }
 
-
-def get_time_of_day():
-    h = datetime.now().hour
-    if 5 <= h < 12:    return "morning"
-    elif 12 <= h < 18: return "day"
-    else:              return "night"
-
-
-def get_today_holiday():
-    now = datetime.now()
-    return HOLIDAYS.get((now.month, now.day))
+HOLIDAY_CAPTION_FALLBACK = [
+    "Сегодня особенный день! Поздравляем всех причастных и желаем отличного настроения 🎉",
+    "Пусть праздник принесёт улыбки и радость в этот день! 🎊",
+    "С праздником! Пусть день будет добрым и запоминающимся ✨",
+]
 
 
-def get_image_url(query):
+def now_msk():
+    return datetime.now(MOSCOW_TZ)
+
+
+def get_today_holidays():
+    """Возвращает список всех праздников на сегодня."""
+    today = now_msk()
+    return HOLIDAYS.get((today.month, today.day), [])
+
+
+def pick_two_distinct_holidays():
+    """Для двух праздничных слотов в день выбираем два разных праздника, если есть."""
+    items = get_today_holidays()
+    if not items:
+        return None, None
+    if len(items) == 1:
+        return items[0], None
+    chosen = random.sample(items, min(2, len(items)))
+    return chosen[0], chosen[1] if len(chosen) > 1 else None
+
+
+def get_image_bytes(query):
     try:
         r = requests.get(
             "https://api.unsplash.com/photos/random",
@@ -70,22 +104,70 @@ def get_image_url(query):
             timeout=10,
         )
         r.raise_for_status()
-        return r.json()["urls"]["regular"]
+        img_url = r.json()["urls"]["regular"]
+        img_r = requests.get(img_url, timeout=15)
+        img_r.raise_for_status()
+        return img_r.content
     except Exception as e:
         print("Unsplash error: " + str(e))
         return None
 
 
-def generate_caption(time_of_day, holiday_name=None):
-    if time_of_day == "morning":
-        prompt = "Напиши тёплое душевное пожелание «Доброе утро» для Telegram-канала. 2-3 строки, с эмодзи, как от близкого друга. Только текст поздравления."
-    elif time_of_day == "night":
-        prompt = "Напиши тёплое пожелание «Спокойной ночи» для Telegram-канала. 2-3 строки, уютное, с эмодзи. Только текст."
-    elif holiday_name:
-        prompt = "Напиши поздравление с праздником «" + holiday_name + "» для Telegram-канала. 3-4 строки, тёплое, с эмодзи. Только текст."
-    else:
-        prompt = "Напиши тёплое пожелание доброго дня для Telegram-канала. 2-3 строки, позитивное, с эмодзи. Только текст."
+def draw_text_on_image(image_bytes, headline, font_path=FONT_PATH):
+    img = Image.open(io.BytesIO(image_bytes)).convert("RGB")
 
+    target_w, target_h = 1080, 1350
+    img_ratio = img.width / img.height
+    target_ratio = target_w / target_h
+    if img_ratio > target_ratio:
+        new_h = target_h
+        new_w = int(new_h * img_ratio)
+    else:
+        new_w = target_w
+        new_h = int(new_w / img_ratio)
+    img = img.resize((new_w, new_h))
+    left = (new_w - target_w) // 2
+    top = (new_h - target_h) // 2
+    img = img.crop((left, top, left + target_w, top + target_h))
+
+    overlay = Image.new("RGBA", img.size, (0, 0, 0, 0))
+    draw_overlay = ImageDraw.Draw(overlay)
+    gradient_height = int(target_h * 0.42)
+    for i in range(gradient_height):
+        alpha = int(150 * (i / gradient_height))
+        y = target_h - gradient_height + i
+        draw_overlay.line([(0, y), (target_w, y)], fill=(0, 0, 0, alpha))
+    img = Image.alpha_composite(img.convert("RGBA"), overlay).convert("RGB")
+
+    draw = ImageDraw.Draw(img)
+    font_size = 78
+    font = ImageFont.truetype(font_path, font_size)
+    max_width = target_w - 120
+    while True:
+        bbox = draw.textbbox((0, 0), headline, font=font)
+        w = bbox[2] - bbox[0]
+        if w <= max_width or font_size <= 36:
+            break
+        font_size -= 4
+        font = ImageFont.truetype(font_path, font_size)
+
+    bbox = draw.textbbox((0, 0), headline, font=font)
+    w, h = bbox[2] - bbox[0], bbox[3] - bbox[1]
+    x = (target_w - w) / 2
+    y = target_h - gradient_height + (gradient_height - h) / 2 - 10
+
+    draw.text((x + 4, y + 4), headline, font=font, fill=(0, 0, 0, 180))
+    draw.text((x, y), headline, font=font, fill=(255, 255, 255, 255))
+
+    out = io.BytesIO()
+    img.save(out, format="JPEG", quality=90)
+    out.seek(0)
+    return out
+
+
+def gemini_request(prompt):
+    if not GEMINI_KEY:
+        return None
     try:
         r = requests.post(
             "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=" + GEMINI_KEY,
@@ -93,20 +175,45 @@ def generate_caption(time_of_day, holiday_name=None):
             timeout=15,
         )
         r.raise_for_status()
-        text = r.json()["candidates"][0]["content"]["parts"][0]["text"].strip()
-        print("Gemini OK")
-        return text
+        return r.json()["candidates"][0]["content"]["parts"][0]["text"].strip()
     except Exception as e:
-        print("Gemini unavailable, using fallback")
-        return random.choice(FALLBACK.get(time_of_day, FALLBACK["day"]))
+        print("Gemini unavailable: " + str(e))
+        return None
 
 
-def send_photo(image_url, caption):
+def build_caption(slot, holiday_name=None):
+    if holiday_name:
+        prompt = ("Напиши короткое тёплое поздравление с праздником «" + holiday_name +
+                   "» для Telegram-канала. 2-3 строки, искренне, с эмодзи. Только текст.")
+        text = gemini_request(prompt)
+        return text or random.choice(HOLIDAY_CAPTION_FALLBACK)
+
+    if slot in ("morning", "day", "afternoon", "evening", "night"):
+        prompts = {
+            "morning": "Напиши тёплое пожелание доброго утра для Telegram-канала, 2 строки, с эмодзи. Только текст.",
+            "day": "Напиши тёплое пожелание доброго дня для Telegram-канала, 2 строки, с эмодзи. Только текст.",
+            "afternoon": "Напиши лёгкое пожелание хорошего полудня для Telegram-канала, 2 строки, с эмодзи. Только текст.",
+            "evening": "Напиши тёплое пожелание доброго вечера для Telegram-канала, 2 строки, с эмодзи. Только текст.",
+            "night": "Напиши тёплое пожелание спокойной ночи для Telegram-канала, 2 строки, с эмодзи. Только текст.",
+        }
+        text = gemini_request(prompts[slot])
+        return text or random.choice(CAPTION_FALLBACK.get(slot, CAPTION_FALLBACK["day"]))
+
+    if slot == "joke":
+        return get_random_joke()
+    if slot == "fact":
+        return get_random_fact()
+
+    return random.choice(CAPTION_FALLBACK["day"])
+
+
+def send_photo(image_file, caption):
     try:
         r = requests.post(
             "https://api.telegram.org/bot" + TELEGRAM_TOKEN + "/sendPhoto",
-            data={"chat_id": CHANNEL_ID, "photo": image_url, "caption": caption},
-            timeout=15,
+            data={"chat_id": CHANNEL_ID, "caption": caption},
+            files={"photo": ("card.jpg", image_file, "image/jpeg")},
+            timeout=20,
         )
         r.raise_for_status()
         print("Published successfully!")
@@ -117,30 +224,78 @@ def send_photo(image_url, caption):
 
 
 def main():
-    print("Bot started: " + datetime.now().strftime("%d.%m.%Y %H:%M"))
-    time_of_day = get_time_of_day()
-    holiday = get_today_holiday()
-    print("Time: " + time_of_day)
+    today = now_msk()
+    print("Bot started (MSK): " + today.strftime("%d.%m.%Y %H:%M"))
+    slot = POST_SLOT
+    print("Slot: " + slot)
 
-    if holiday:
-        query, holiday_name = holiday[1], holiday[0]
-        print("Holiday: " + holiday_name)
-    elif time_of_day == "morning":
-        query, holiday_name = random.choice(MORNING_QUERIES), None
-    elif time_of_day == "day":
-        query, holiday_name = random.choice(DAY_QUERIES), None
+    holiday_name = None
+
+    if slot in ("holiday1", "holiday2"):
+        h1, h2 = pick_two_distinct_holidays()
+        chosen = h1 if slot == "holiday1" else h2
+        if not chosen:
+            print("No holiday for this slot today, skipping.")
+            return
+        holiday_name, _, query = chosen
+        headline = holiday_name
+        print("Holiday post: " + holiday_name)
+
+    elif slot == "joke":
+        query = random.choice(JOKE_QUERIES)
+        headline = random.choice(IMAGE_TEXT["joke"])
+
+    elif slot == "fact":
+        query = random.choice(FACT_QUERIES)
+        headline = random.choice(IMAGE_TEXT["fact"])
+
+    elif slot == "morning":
+        query = random.choice(MORNING_QUERIES)
+        headline = random.choice(IMAGE_TEXT["morning"])
+
+    elif slot == "day":
+        query = random.choice(DAY_QUERIES)
+        headline = random.choice(IMAGE_TEXT["day"])
+
+    elif slot == "afternoon":
+        query = random.choice(AFTERNOON_QUERIES)
+        headline = random.choice(IMAGE_TEXT["afternoon"])
+
+    elif slot == "evening":
+        query = random.choice(EVENING_QUERIES)
+        headline = random.choice(IMAGE_TEXT["evening"])
+
+    elif slot == "night":
+        query = random.choice(NIGHT_QUERIES)
+        headline = random.choice(IMAGE_TEXT["night"])
+
     else:
-        query, holiday_name = random.choice(NIGHT_QUERIES), None
+        # auto-fallback по часу, на случай ручного теста
+        hour = today.hour
+        if 6 <= hour < 10:
+            slot, query, headline = "morning", random.choice(MORNING_QUERIES), random.choice(IMAGE_TEXT["morning"])
+        elif 10 <= hour < 14:
+            slot, query, headline = "day", random.choice(DAY_QUERIES), random.choice(IMAGE_TEXT["day"])
+        elif 14 <= hour < 18:
+            slot, query, headline = "afternoon", random.choice(AFTERNOON_QUERIES), random.choice(IMAGE_TEXT["afternoon"])
+        elif 18 <= hour < 21:
+            slot, query, headline = "evening", random.choice(EVENING_QUERIES), random.choice(IMAGE_TEXT["evening"])
+        else:
+            slot, query, headline = "night", random.choice(NIGHT_QUERIES), random.choice(IMAGE_TEXT["night"])
 
-    print("Image: " + query)
-    image_url = get_image_url(query)
-    if not image_url:
-        print("No image!")
+    print("Image query: " + query)
+    image_bytes = get_image_bytes(query)
+    if not image_bytes:
+        print("No image, aborting.")
         return
 
-    caption = generate_caption(time_of_day, holiday_name)
-    print("Done, posting...")
-    send_photo(image_url, caption)
+    print("Drawing headline: " + headline)
+    final_image = draw_text_on_image(image_bytes, headline)
+
+    caption = build_caption(slot, holiday_name)
+    print("Caption: " + caption)
+
+    send_photo(final_image, caption)
 
 
 if __name__ == "__main__":
