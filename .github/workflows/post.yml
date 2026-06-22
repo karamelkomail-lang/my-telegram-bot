@@ -1,17 +1,77 @@
-name: Bot
+name: Telegram Bot — Автопостинг
+
 on:
   schedule:
-    - cron: '0 4 * * *'
-    - cron: '0 9 * * *'
-    - cron: '0 18 * * *'
+    # Время в UTC. Москва = UTC+3.
+    - cron: '0 4 * * *'   # 07:00 МСК — Доброе утро
+    - cron: '0 7 * * *'   # 10:00 МСК — Праздник дня #1
+    - cron: '0 9 * * *'   # 12:00 МСК — Добрый день
+    - cron: '0 11 * * *'  # 14:00 МСК — Шутка дня
+    - cron: '0 12 * * *'  # 15:00 МСК — Хорошего полудня
+    - cron: '0 14 * * *'  # 17:00 МСК — Интересный факт
+    - cron: '0 15 * * *'  # 18:00 МСК — Праздник дня #2
+    - cron: '0 16 * * *'  # 19:00 МСК — Добрый вечер
+    - cron: '0 19 * * *'  # 22:00 МСК — Спокойной ночи
   workflow_dispatch:
+    inputs:
+      slot:
+        description: 'Слот для ручного запуска'
+        required: false
+        default: 'auto'
+        type: choice
+        options:
+          - auto
+          - morning
+          - holiday1
+          - day
+          - joke
+          - afternoon
+          - fact
+          - holiday2
+          - evening
+          - night
+
 jobs:
   post:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Python setup
+        uses: actions/setup-python@v5
         with:
           python-version: '3.11'
-      - run: pip install requests
-      - run: python bot.py
+
+      - name: Install dependencies
+        run: pip install requests Pillow
+
+      - name: Determine slot from cron schedule
+        id: slot
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            echo "slot=${{ inputs.slot }}" >> "$GITHUB_OUTPUT"
+          else
+            HOUR_UTC=$(date -u +%H)
+            case "$HOUR_UTC" in
+              "04") echo "slot=morning" >> "$GITHUB_OUTPUT" ;;
+              "07") echo "slot=holiday1" >> "$GITHUB_OUTPUT" ;;
+              "09") echo "slot=day" >> "$GITHUB_OUTPUT" ;;
+              "11") echo "slot=joke" >> "$GITHUB_OUTPUT" ;;
+              "12") echo "slot=afternoon" >> "$GITHUB_OUTPUT" ;;
+              "14") echo "slot=fact" >> "$GITHUB_OUTPUT" ;;
+              "15") echo "slot=holiday2" >> "$GITHUB_OUTPUT" ;;
+              "16") echo "slot=evening" >> "$GITHUB_OUTPUT" ;;
+              "19") echo "slot=night" >> "$GITHUB_OUTPUT" ;;
+              *) echo "slot=auto" >> "$GITHUB_OUTPUT" ;;
+            esac
+          fi
+
+      - name: Run bot
+        env:
+          TELEGRAM_TOKEN: ${{ secrets.TELEGRAM_TOKEN }}
+          CHANNEL_ID: ${{ secrets.CHANNEL_ID }}
+          UNSPLASH_KEY: ${{ secrets.UNSPLASH_KEY }}
+          GEMINI_KEY: ${{ secrets.GEMINI_KEY }}
+          POST_SLOT: ${{ steps.slot.outputs.slot }}
+        run: python bot.py
