@@ -69,10 +69,10 @@ jobs:
 
       - name: Run bot
         env:
-          PEXELS_KEY: ${{ secrets.PEXELS_KEY }}
           TELEGRAM_TOKEN: ${{ secrets.TELEGRAM_TOKEN }}
           CHANNEL_ID: ${{ secrets.CHANNEL_ID }}
           UNSPLASH_KEY: ${{ secrets.UNSPLASH_KEY }}
+          PEXELS_KEY: ${{ secrets.PEXELS_KEY }}
           GEMINI_KEY: ${{ secrets.GEMINI_KEY }}
           POST_SLOT: ${{ steps.slot.outputs.slot }}
         run: python bot.py
