@@ -36,20 +36,21 @@ DAY_QUERIES       = ["sunny day flowers meadow","beautiful nature sunshine","spr
 AFTERNOON_QUERIES = ["warm afternoon light nature","peaceful countryside sunshine","flowers field bright day"]
 FACT_QUERIES       = ["curious nature macro colorful","interesting wildlife close up","amazing nature detail bright"]
 
-# Промпты для рисованных иллюстраций (стиль как у популярных открыточных каналов)
-EVENING_ART_QUERIES = [
-    "cozy watercolor illustration good evening, warm sunset colors, flowers, soft pastel art style, greeting card",
-    "cute cartoon illustration evening cottage, warm lights, flowers, digital art greeting card style",
-    "whimsical illustration evening tea time, cozy house, soft glowing lights, pastel colors",
+# Промпты для рисованных иллюстраций С ВСТРОЕННЫМ ТЕКСТОМ — модель сама рисует надпись
+# как часть открытки (объёмные буквы / рукописный шрифт), как у популярных каналов с открытками.
+EVENING_ART_PROMPTS = [
+    'Greeting card illustration, large 3D puffy bubble letters spelling "Доброго вечера!" in Russian Cyrillic, warm sunset colors, cozy cottage scene with flowers below the text, soft pastel art style, decorative border',
+    'Greeting card illustration with elegant handwritten cursive text "Доброго вечера" in Russian Cyrillic at the top, golden hour sunset background, blooming flowers, warm glowing light, watercolor style',
+    'Cute cartoon greeting card, bold rounded 3D letters spelling "Хорошего вечера!" in Russian Cyrillic, cozy house with warm lights, soft pastel colors, decorative flowers around the text',
 ]
-NIGHT_ART_QUERIES = [
-    "cute cartoon illustration good night, moon and stars, cozy bedroom, soft pastel colors, greeting card art",
-    "whimsical fairytale illustration sleeping moon, stars, lavender purple tones, digital art",
-    "cozy watercolor illustration night sky, stars, sleeping animals, soft glowing colors",
+NIGHT_ART_PROMPTS = [
+    'Greeting card illustration, elegant handwritten cursive text "Доброй ночи" in Russian Cyrillic glowing softly, sleeping crescent moon with stars, lavender purple night sky, whimsical fairytale style',
+    'Greeting card illustration, large 3D puffy bubble letters spelling "Спокойной ночи!" in Russian Cyrillic, night sky background with stars and moon, soft pastel colors, cute sleeping animals below',
+    'Cute cartoon greeting card, bold rounded 3D letters spelling "Сладких снов!" in Russian Cyrillic, cozy night scene with stars, soft glowing colors, decorative border',
 ]
-JOKE_ART_QUERIES = [
-    "cute cartoon illustration funny animal, bright colors, playful digital art style, greeting card",
-    "whimsical illustration cheerful character smiling, bright pastel colors, digital art",
+JOKE_ART_PROMPTS = [
+    'Cute cartoon greeting card, large 3D puffy bubble letters spelling "Улыбнись!" in Russian Cyrillic, bright cheerful colors, playful funny character illustration below the text',
+    'Greeting card illustration, bold rounded colorful letters spelling "Юмор дня" in Russian Cyrillic, bright pastel background, whimsical cheerful character, digital art style',
 ]
 
 IMAGE_TEXT = {
@@ -135,23 +136,22 @@ def get_pollinations_illustration_bytes(prompt, attempts=3):
 
 
 def get_illustration_bytes(prompt):
-    """Выбирает источник иллюстрации: если есть рабочий Gemini-ключ — случайно чередует
-    Gemini и Pollinations (разнообразие стиля); иначе использует только Pollinations.
-    При сбое одного источника автоматически пробует другой."""
-    sources = []
+    """Выбирает источник иллюстрации с текстом, встроенным в промпт.
+    Gemini заметно лучше рисует читаемый текст, поэтому пробуем его первым.
+    Pollinations — запасной источник (текст на нём может быть нечитаемым,
+    поэтому в этом случае дополнительно накладываем текст через PIL).
+    Возвращает (image_bytes, used_gemini)."""
     if GEMINI_KEY:
-        sources = [get_gemini_illustration_bytes, get_pollinations_illustration_bytes]
-        random.shuffle(sources)
-    else:
-        sources = [get_pollinations_illustration_bytes]
-
-    for source_fn in sources:
-        result = source_fn(prompt)
+        result = get_gemini_illustration_bytes(prompt)
         if result:
-            return result
-        print(source_fn.__name__ + " failed, trying next illustration source...")
+            return result, True
+        print("Gemini illustration failed, trying Pollinations...")
 
-    return None
+    result = get_pollinations_illustration_bytes(prompt)
+    if result:
+        return result, False
+
+    return None, False
 
 
 def get_photo_bytes(query, attempts=3):
@@ -433,13 +433,14 @@ def main():
             return
         holiday_name, _, base_query = chosen
         headline = holiday_name
-        # Превращаем тему праздника в художественный промпт
-        art_prompt = ("cute cartoon illustration, " + base_query +
-                       ", warm pastel colors, greeting card digital art style")
+        # Праздник — текст встраиваем прямо в промпт генерации (с кавычками вокруг названия)
+        art_prompt = ('Greeting card illustration, large 3D puffy bubble letters spelling "' +
+                       holiday_name + '" in Russian Cyrillic at the top, ' + base_query +
+                       ', warm pastel colors, decorative festive border, digital art style')
         print("Holiday post: " + holiday_name)
 
     elif slot == "joke":
-        art_prompt = random.choice(JOKE_ART_QUERIES)
+        art_prompt = random.choice(JOKE_ART_PROMPTS)
         headline = random.choice(IMAGE_TEXT["joke"])
 
     elif slot == "fact":
@@ -459,11 +460,11 @@ def main():
         headline = random.choice(IMAGE_TEXT["afternoon"])
 
     elif slot == "evening":
-        art_prompt = random.choice(EVENING_ART_QUERIES)
+        art_prompt = random.choice(EVENING_ART_PROMPTS)
         headline = random.choice(IMAGE_TEXT["evening"])
 
     elif slot == "night":
-        art_prompt = random.choice(NIGHT_ART_QUERIES)
+        art_prompt = random.choice(NIGHT_ART_PROMPTS)
         headline = random.choice(IMAGE_TEXT["night"])
 
     else:
@@ -476,18 +477,23 @@ def main():
             slot, query, headline, illustrated = "afternoon", random.choice(AFTERNOON_QUERIES), random.choice(IMAGE_TEXT["afternoon"]), False
         elif 18 <= hour < 21:
             slot, illustrated = "evening", True
-            art_prompt, headline = random.choice(EVENING_ART_QUERIES), random.choice(IMAGE_TEXT["evening"])
+            art_prompt, headline = random.choice(EVENING_ART_PROMPTS), random.choice(IMAGE_TEXT["evening"])
         else:
             slot, illustrated = "night", True
-            art_prompt, headline = random.choice(NIGHT_ART_QUERIES), random.choice(IMAGE_TEXT["night"])
+            art_prompt, headline = random.choice(NIGHT_ART_PROMPTS), random.choice(IMAGE_TEXT["night"])
+
+    image_is_illustration_with_text = False  # True если текст уже читаемо встроен моделью (Gemini)
 
     if illustrated:
         print("Illustration prompt: " + art_prompt)
-        image_bytes = get_illustration_bytes(art_prompt)
+        image_bytes, used_gemini = get_illustration_bytes(art_prompt)
+        if image_bytes and used_gemini:
+            # Gemini хорошо рисует текст — не накладываем PIL-текст повторно
+            image_is_illustration_with_text = True
         if not image_bytes:
             print("Illustration failed, falling back to photo source.")
-            fallback_query = headline
-            image_bytes = get_photo_bytes(fallback_query)
+            illustrated = False
+            image_bytes = get_photo_bytes(headline)
     else:
         print("Photo query: " + query)
         image_bytes = get_photo_bytes(query)
@@ -500,8 +506,14 @@ def main():
         send_text(headline + "\n\n" + caption)
         return
 
-    print("Drawing headline: " + headline)
-    final_image = draw_text_on_image(image_bytes, headline, illustrated=illustrated)
+    if image_is_illustration_with_text:
+        print("Text embedded by model, skipping PIL overlay.")
+        out = io.BytesIO(image_bytes)
+        final_image = out
+    else:
+        print("Drawing headline (PIL overlay): " + headline)
+        final_image = draw_text_on_image(image_bytes, headline, illustrated=illustrated)
+
     send_photo(final_image, caption)
 
 
