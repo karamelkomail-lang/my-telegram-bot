@@ -36,8 +36,7 @@ DAY_QUERIES       = ["sunny day flowers meadow","beautiful nature sunshine","spr
 AFTERNOON_QUERIES = ["warm afternoon light nature","peaceful countryside sunshine","flowers field bright day"]
 FACT_QUERIES       = ["curious nature macro colorful","interesting wildlife close up","amazing nature detail bright"]
 
-# Промпты для рисованных иллюстраций С ВСТРОЕННЫМ ТЕКСТОМ — модель сама рисует надпись
-# как часть открытки (объёмные буквы / рукописный шрифт), как у популярных каналов с открытками.
+# Промпты С ВСТРОЕННЫМ ТЕКСТОМ — только для Gemini (хорошо рисует читаемый текст).
 EVENING_ART_PROMPTS = [
     'Greeting card illustration, large 3D puffy bubble letters spelling "Доброго вечера!" in Russian Cyrillic, warm sunset colors, cozy cottage scene with flowers below the text, soft pastel art style, decorative border',
     'Greeting card illustration with elegant handwritten cursive text "Доброго вечера" in Russian Cyrillic at the top, golden hour sunset background, blooming flowers, warm glowing light, watercolor style',
@@ -51,6 +50,22 @@ NIGHT_ART_PROMPTS = [
 JOKE_ART_PROMPTS = [
     'Cute cartoon greeting card, large 3D puffy bubble letters spelling "Улыбнись!" in Russian Cyrillic, bright cheerful colors, playful funny character illustration below the text',
     'Greeting card illustration, bold rounded colorful letters spelling "Юмор дня" in Russian Cyrillic, bright pastel background, whimsical cheerful character, digital art style',
+]
+
+# Промпты БЕЗ ТЕКСТА — для Pollinations (плохо рисует буквы, поэтому текст добавляется через PIL отдельно).
+EVENING_SCENE_PROMPTS = [
+    "cozy watercolor illustration, warm sunset colors, cottage scene with flowers, soft pastel art style, greeting card, no text, no letters, no words",
+    "golden hour sunset background, blooming flowers, warm glowing light, watercolor style, no text, no letters, no words",
+    "cute cartoon cozy house with warm lights, soft pastel colors, decorative flowers, no text, no letters, no words",
+]
+NIGHT_SCENE_PROMPTS = [
+    "sleeping crescent moon with stars, lavender purple night sky, whimsical fairytale style, no text, no letters, no words",
+    "night sky background with stars and moon, soft pastel colors, cute sleeping animals, no text, no letters, no words",
+    "cozy night scene with stars, soft glowing colors, decorative clouds, no text, no letters, no words",
+]
+JOKE_SCENE_PROMPTS = [
+    "bright cheerful colors, playful funny cartoon animal illustration, no text, no letters, no words",
+    "bright pastel background, whimsical cheerful character, digital art style, no text, no letters, no words",
 ]
 
 IMAGE_TEXT = {
@@ -135,19 +150,18 @@ def get_pollinations_illustration_bytes(prompt, attempts=3):
     return None
 
 
-def get_illustration_bytes(prompt):
-    """Выбирает источник иллюстрации с текстом, встроенным в промпт.
-    Gemini заметно лучше рисует читаемый текст, поэтому пробуем его первым.
-    Pollinations — запасной источник (текст на нём может быть нечитаемым,
-    поэтому в этом случае дополнительно накладываем текст через PIL).
+def get_illustration_bytes(text_prompt, scene_prompt):
+    """Выбирает источник иллюстрации. Gemini получает text_prompt (с встроенным текстом,
+    он хорошо рисует читаемые буквы). Pollinations получает scene_prompt (без текста,
+    т.к. Flux плохо рисует буквы — текст добавляется через PIL отдельно).
     Возвращает (image_bytes, used_gemini)."""
     if GEMINI_KEY:
-        result = get_gemini_illustration_bytes(prompt)
+        result = get_gemini_illustration_bytes(text_prompt)
         if result:
             return result, True
         print("Gemini illustration failed, trying Pollinations...")
 
-    result = get_pollinations_illustration_bytes(prompt)
+    result = get_pollinations_illustration_bytes(scene_prompt)
     if result:
         return result, False
 
@@ -433,14 +447,18 @@ def main():
             return
         holiday_name, _, base_query = chosen
         headline = holiday_name
-        # Праздник — текст встраиваем прямо в промпт генерации (с кавычками вокруг названия)
-        art_prompt = ('Greeting card illustration, large 3D puffy bubble letters spelling "' +
-                       holiday_name + '" in Russian Cyrillic at the top, ' + base_query +
-                       ', warm pastel colors, decorative festive border, digital art style')
+        # Праздник — для Gemini текст встроен в промпт, для Pollinations промпт без текста
+        text_prompt = ('Greeting card illustration, large 3D puffy bubble letters spelling "' +
+                        holiday_name + '" in Russian Cyrillic at the top, ' + base_query +
+                        ', warm pastel colors, decorative festive border, digital art style')
+        scene_prompt = (base_query + ", warm pastel colors, decorative festive border, " +
+                         "digital art greeting card style, no text, no letters, no words")
         print("Holiday post: " + holiday_name)
 
     elif slot == "joke":
-        art_prompt = random.choice(JOKE_ART_PROMPTS)
+        idx = random.randint(0, len(JOKE_ART_PROMPTS) - 1)
+        text_prompt = JOKE_ART_PROMPTS[idx]
+        scene_prompt = JOKE_SCENE_PROMPTS[idx % len(JOKE_SCENE_PROMPTS)]
         headline = random.choice(IMAGE_TEXT["joke"])
 
     elif slot == "fact":
@@ -460,11 +478,15 @@ def main():
         headline = random.choice(IMAGE_TEXT["afternoon"])
 
     elif slot == "evening":
-        art_prompt = random.choice(EVENING_ART_PROMPTS)
+        idx = random.randint(0, len(EVENING_ART_PROMPTS) - 1)
+        text_prompt = EVENING_ART_PROMPTS[idx]
+        scene_prompt = EVENING_SCENE_PROMPTS[idx % len(EVENING_SCENE_PROMPTS)]
         headline = random.choice(IMAGE_TEXT["evening"])
 
     elif slot == "night":
-        art_prompt = random.choice(NIGHT_ART_PROMPTS)
+        idx = random.randint(0, len(NIGHT_ART_PROMPTS) - 1)
+        text_prompt = NIGHT_ART_PROMPTS[idx]
+        scene_prompt = NIGHT_SCENE_PROMPTS[idx % len(NIGHT_SCENE_PROMPTS)]
         headline = random.choice(IMAGE_TEXT["night"])
 
     else:
@@ -477,16 +499,23 @@ def main():
             slot, query, headline, illustrated = "afternoon", random.choice(AFTERNOON_QUERIES), random.choice(IMAGE_TEXT["afternoon"]), False
         elif 18 <= hour < 21:
             slot, illustrated = "evening", True
-            art_prompt, headline = random.choice(EVENING_ART_PROMPTS), random.choice(IMAGE_TEXT["evening"])
+            idx = random.randint(0, len(EVENING_ART_PROMPTS) - 1)
+            text_prompt = EVENING_ART_PROMPTS[idx]
+            scene_prompt = EVENING_SCENE_PROMPTS[idx % len(EVENING_SCENE_PROMPTS)]
+            headline = random.choice(IMAGE_TEXT["evening"])
         else:
             slot, illustrated = "night", True
-            art_prompt, headline = random.choice(NIGHT_ART_PROMPTS), random.choice(IMAGE_TEXT["night"])
+            idx = random.randint(0, len(NIGHT_ART_PROMPTS) - 1)
+            text_prompt = NIGHT_ART_PROMPTS[idx]
+            scene_prompt = NIGHT_SCENE_PROMPTS[idx % len(NIGHT_SCENE_PROMPTS)]
+            headline = random.choice(IMAGE_TEXT["night"])
 
     image_is_illustration_with_text = False  # True если текст уже читаемо встроен моделью (Gemini)
 
     if illustrated:
-        print("Illustration prompt: " + art_prompt)
-        image_bytes, used_gemini = get_illustration_bytes(art_prompt)
+        print("Text prompt (Gemini): " + text_prompt)
+        print("Scene prompt (Pollinations): " + scene_prompt)
+        image_bytes, used_gemini = get_illustration_bytes(text_prompt, scene_prompt)
         if image_bytes and used_gemini:
             # Gemini хорошо рисует текст — не накладываем PIL-текст повторно
             image_is_illustration_with_text = True
