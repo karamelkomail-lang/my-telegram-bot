@@ -114,7 +114,7 @@ def pick_two_distinct_holidays():
 
 # ───────────────────────── Источники картинок ─────────────────────────
 
-def get_illustration_bytes(prompt, attempts=3):
+def get_pollinations_illustration_bytes(prompt, attempts=3):
     """Рисованная иллюстрация через Pollinations.ai (без ключа, без оплаты)."""
     encoded = urllib.parse.quote(prompt)
     seed = random.randint(1, 999999999)
@@ -131,6 +131,26 @@ def get_illustration_bytes(prompt, attempts=3):
         except Exception as e:
             print("Pollinations attempt " + str(attempt) + " failed: " + str(e))
     print("Pollinations failed after " + str(attempts) + " attempts.")
+    return None
+
+
+def get_illustration_bytes(prompt):
+    """Выбирает источник иллюстрации: если есть рабочий Gemini-ключ — случайно чередует
+    Gemini и Pollinations (разнообразие стиля); иначе использует только Pollinations.
+    При сбое одного источника автоматически пробует другой."""
+    sources = []
+    if GEMINI_KEY:
+        sources = [get_gemini_illustration_bytes, get_pollinations_illustration_bytes]
+        random.shuffle(sources)
+    else:
+        sources = [get_pollinations_illustration_bytes]
+
+    for source_fn in sources:
+        result = source_fn(prompt)
+        if result:
+            return result
+        print(source_fn.__name__ + " failed, trying next illustration source...")
+
     return None
 
 
@@ -261,19 +281,78 @@ def draw_text_on_image(image_bytes, headline, font_path=FONT_PATH, illustrated=F
 # ───────────────────────── Текст подписи ─────────────────────────
 
 def gemini_request(prompt):
+    """Текстовый запрос к Gemini. Поддерживает оба формата ключей:
+    новый 'AQ.' (через заголовок Authorization: Bearer) и старый 'AIzaSy' (через ?key=)."""
     if not GEMINI_KEY:
         return None
+
+    url = "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent"
+    payload = {"contents": [{"parts": [{"text": prompt}]}]}
+
+    # 1. Новый формат ключа (AQ.) — через Bearer-заголовок
+    if GEMINI_KEY.startswith("AQ."):
+        try:
+            r = requests.post(
+                url,
+                headers={"Authorization": "Bearer " + GEMINI_KEY, "Content-Type": "application/json"},
+                json=payload,
+                timeout=15,
+            )
+            r.raise_for_status()
+            return r.json()["candidates"][0]["content"]["parts"][0]["text"].strip()
+        except Exception as e:
+            print("Gemini (Bearer auth) unavailable: " + str(e))
+            return None
+
+    # 2. Старый формат ключа (AIzaSy) — через query-параметр
     try:
         r = requests.post(
-            "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=" + GEMINI_KEY,
-            json={"contents": [{"parts": [{"text": prompt}]}]},
+            url + "?key=" + GEMINI_KEY,
+            json=payload,
             timeout=15,
         )
         r.raise_for_status()
         return r.json()["candidates"][0]["content"]["parts"][0]["text"].strip()
     except Exception as e:
-        print("Gemini unavailable: " + str(e))
+        print("Gemini (key param auth) unavailable: " + str(e))
         return None
+
+
+def get_gemini_illustration_bytes(prompt, attempts=2):
+    """Рисованная иллюстрация через Gemini 2.0 Flash (image generation), бесплатный уровень.
+    Поддерживает оба формата ключей, как и gemini_request."""
+    if not GEMINI_KEY:
+        return None
+
+    url = "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash-preview-image-generation:generateContent"
+    payload = {
+        "contents": [{"parts": [{"text": prompt}]}],
+        "generationConfig": {"responseModalities": ["IMAGE", "TEXT"]},
+    }
+
+    for attempt in range(1, attempts + 1):
+        try:
+            if GEMINI_KEY.startswith("AQ."):
+                r = requests.post(
+                    url,
+                    headers={"Authorization": "Bearer " + GEMINI_KEY, "Content-Type": "application/json"},
+                    json=payload,
+                    timeout=30,
+                )
+            else:
+                r = requests.post(url + "?key=" + GEMINI_KEY, json=payload, timeout=30)
+            r.raise_for_status()
+            parts = r.json()["candidates"][0]["content"]["parts"]
+            for part in parts:
+                inline = part.get("inlineData") or part.get("inline_data")
+                if inline and inline.get("data"):
+                    import base64
+                    print("Image source: Gemini 2.0 Flash")
+                    return base64.b64decode(inline["data"])
+            print("Gemini image response had no image data, attempt " + str(attempt))
+        except Exception as e:
+            print("Gemini image attempt " + str(attempt) + " failed: " + str(e))
+    return None
 
 
 def build_caption(slot, holiday_name=None):
