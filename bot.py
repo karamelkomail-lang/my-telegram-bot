@@ -26,6 +26,33 @@ POST_SLOT      = os.environ.get("POST_SLOT", "auto")
 
 MOSCOW_TZ = timezone(timedelta(hours=3))
 FONT_PATH = os.path.join(os.path.dirname(__file__), "fonts", "DejaVuSans-Bold.ttf")
+LAST_POST_FILE = os.path.join(os.path.dirname(__file__), "last_post.txt")
+MIN_MINUTES_BETWEEN_POSTS = 50  # защита от повторных/задержанных запусков cron
+
+
+def minutes_since_last_post():
+    """Возвращает количество минут с последнего успешного поста, или None если файла нет/он повреждён."""
+    if not os.path.exists(LAST_POST_FILE):
+        return None
+    try:
+        with open(LAST_POST_FILE, "r", encoding="utf-8") as f:
+            content = f.read().strip()
+        last_dt = datetime.fromisoformat(content)
+        delta = now_msk() - last_dt
+        return delta.total_seconds() / 60
+    except Exception as e:
+        print("Could not read last_post.txt: " + str(e))
+        return None
+
+
+def mark_post_published():
+    """Записывает текущее время как время последней успешной публикации."""
+    try:
+        with open(LAST_POST_FILE, "w", encoding="utf-8") as f:
+            f.write(now_msk().isoformat())
+        print("last_post.txt updated.")
+    except Exception as e:
+        print("Could not write last_post.txt: " + str(e))
 
 # Слоты, для которых используем рисованные иллюстрации (Pollinations.ai)
 ILLUSTRATED_SLOTS = {"evening", "night", "joke", "holiday1", "holiday2"}
@@ -436,6 +463,13 @@ def main():
     slot = POST_SLOT
     print("Slot: " + slot)
 
+    minutes_passed = minutes_since_last_post()
+    if minutes_passed is not None and minutes_passed < MIN_MINUTES_BETWEEN_POSTS:
+        print("Last post was " + str(round(minutes_passed, 1)) + " minutes ago "
+              "(limit: " + str(MIN_MINUTES_BETWEEN_POSTS) + " min). "
+              "Skipping to avoid duplicate/delayed-cron post.")
+        return
+
     holiday_name = None
     illustrated = slot in ILLUSTRATED_SLOTS
 
@@ -532,7 +566,8 @@ def main():
 
     if not image_bytes:
         print("No image available, sending text-only post.")
-        send_text(headline + "\n\n" + caption)
+        if send_text(headline + "\n\n" + caption):
+            mark_post_published()
         return
 
     if image_is_illustration_with_text:
@@ -543,7 +578,8 @@ def main():
         print("Drawing headline (PIL overlay): " + headline)
         final_image = draw_text_on_image(image_bytes, headline, illustrated=illustrated)
 
-    send_photo(final_image, caption)
+    if send_photo(final_image, caption):
+        mark_post_published()
 
 
 if __name__ == "__main__":
