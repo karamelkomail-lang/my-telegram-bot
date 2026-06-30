@@ -2,34 +2,10 @@ name: Telegram Bot — Автопостинг
 
 on:
   schedule:
-    # Время в UTC. Москва = UTC+3.
-    - cron: '0 4 * * *'   # 07:00 МСК — Доброе утро
-    - cron: '0 7 * * *'   # 10:00 МСК — Праздник дня #1
-    - cron: '0 9 * * *'   # 12:00 МСК — Добрый день
-    - cron: '0 11 * * *'  # 14:00 МСК — Шутка дня
-    - cron: '0 12 * * *'  # 15:00 МСК — Хорошего полудня
-    - cron: '0 14 * * *'  # 17:00 МСК — Интересный факт
-    - cron: '0 15 * * *'  # 18:00 МСК — Праздник дня #2
-    - cron: '0 16 * * *'  # 19:00 МСК — Добрый вечер
-    - cron: '0 19 * * *'  # 22:00 МСК — Спокойной ночи
+    # Запуск каждый час. Сам bot.py решает, нужно ли публиковать пост в этот час
+    # (на основе московского времени) и не публикует дубли (журнал posted_log.txt).
+    - cron: '0 * * * *'
   workflow_dispatch:
-    inputs:
-      slot:
-        description: 'Слот для ручного запуска'
-        required: false
-        default: 'auto'
-        type: choice
-        options:
-          - auto
-          - morning
-          - holiday1
-          - day
-          - joke
-          - afternoon
-          - fact
-          - holiday2
-          - evening
-          - night
 
 jobs:
   post:
@@ -48,27 +24,6 @@ jobs:
       - name: Install dependencies
         run: pip install requests Pillow
 
-      - name: Determine slot from cron schedule
-        id: slot
-        run: |
-          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
-            echo "slot=${{ inputs.slot }}" >> "$GITHUB_OUTPUT"
-          else
-            HOUR_UTC=$(date -u +%H)
-            case "$HOUR_UTC" in
-              "04") echo "slot=morning" >> "$GITHUB_OUTPUT" ;;
-              "07") echo "slot=holiday1" >> "$GITHUB_OUTPUT" ;;
-              "09") echo "slot=day" >> "$GITHUB_OUTPUT" ;;
-              "11") echo "slot=joke" >> "$GITHUB_OUTPUT" ;;
-              "12") echo "slot=afternoon" >> "$GITHUB_OUTPUT" ;;
-              "14") echo "slot=fact" >> "$GITHUB_OUTPUT" ;;
-              "15") echo "slot=holiday2" >> "$GITHUB_OUTPUT" ;;
-              "16") echo "slot=evening" >> "$GITHUB_OUTPUT" ;;
-              "19") echo "slot=night" >> "$GITHUB_OUTPUT" ;;
-              *) echo "slot=auto" >> "$GITHUB_OUTPUT" ;;
-            esac
-          fi
-
       - name: Run bot
         env:
           TELEGRAM_TOKEN: ${{ secrets.TELEGRAM_TOKEN }}
@@ -76,15 +31,14 @@ jobs:
           UNSPLASH_KEY: ${{ secrets.UNSPLASH_KEY }}
           PEXELS_KEY: ${{ secrets.PEXELS_KEY }}
           GEMINI_KEY: ${{ secrets.GEMINI_KEY }}
-          POST_SLOT: ${{ steps.slot.outputs.slot }}
         run: python bot.py
 
-      - name: Save last-post timestamp
+      - name: Save posted_log.txt
         run: |
-          if [ -f last_post.txt ]; then
+          if [ -f posted_log.txt ]; then
             git config user.name "github-actions[bot]"
             git config user.email "github-actions[bot]@users.noreply.github.com"
-            git add last_post.txt
-            git diff --staged --quiet || git commit -m "Update last_post timestamp [skip ci]"
-            git push || echo "Nothing to push or push failed (non-fatal)"
+            git add posted_log.txt
+            git diff --staged --quiet || git commit -m "Update posted_log [skip ci]"
+            git push || echo "Push skipped or failed (non-fatal)"
           fi
