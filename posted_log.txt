@@ -25,3 +25,4 @@
 2026-07-16:night
 2026-07-17:holiday1
 2026-07-17:afternoon
+2026-07-17:evening
