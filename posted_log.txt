@@ -1,4 +1,3 @@
-2026-07-05:afternoon
 2026-07-05:evening
 2026-07-06:afternoon
 2026-07-06:night
@@ -28,3 +27,4 @@
 2026-07-19:evening
 2026-07-20:day
 2026-07-20:afternoon
+2026-07-20:night
