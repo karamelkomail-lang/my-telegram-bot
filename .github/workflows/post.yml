@@ -1,9 +1,7 @@
-name: Telegram Bot — Автопостинг
+name: Telegram Bot
 
 on:
   schedule:
-    # Запуск каждый час. Сам bot.py решает, нужно ли публиковать пост в этот час
-    # (на основе московского времени) и не публикует дубли (журнал posted_log.txt).
     - cron: '0 * * * *'
   workflow_dispatch:
 
@@ -13,32 +11,24 @@ jobs:
     permissions:
       contents: write
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Python setup
-        uses: actions/setup-python@v5
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
         with:
           python-version: '3.11'
-
-      - name: Install dependencies
-        run: pip install requests Pillow
-
+      - run: pip install requests Pillow
       - name: Run bot
         env:
           TELEGRAM_TOKEN: ${{ secrets.TELEGRAM_TOKEN }}
           CHANNEL_ID: ${{ secrets.CHANNEL_ID }}
           UNSPLASH_KEY: ${{ secrets.UNSPLASH_KEY }}
-          PEXELS_KEY: ${{ secrets.PEXELS_KEY }}
           GEMINI_KEY: ${{ secrets.GEMINI_KEY }}
         run: python bot.py
-
-      - name: Save posted_log.txt
+      - name: Save log
         run: |
           if [ -f posted_log.txt ]; then
             git config user.name "github-actions[bot]"
             git config user.email "github-actions[bot]@users.noreply.github.com"
             git add posted_log.txt
-            git diff --staged --quiet || git commit -m "Update posted_log [skip ci]"
-            git push || echo "Push skipped or failed (non-fatal)"
+            git diff --staged --quiet || git commit -m "Update log [skip ci]"
+            git push || true
           fi
