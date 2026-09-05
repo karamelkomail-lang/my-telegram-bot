@@ -1,4 +1,3 @@
-2026-08-23:night
 2026-08-24:morning
 2026-08-24:holiday
 2026-08-24:day
@@ -28,3 +27,4 @@
 2026-09-04:afternoon
 2026-09-05:holiday
 2026-09-05:joke
+2026-09-05:afternoon
